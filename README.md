@@ -36,7 +36,7 @@ Live2D 模型：.moc3 + model3.json + 动作 + 物理 + .cmo3（可继续在 Cub
 ### macOS / Linux
 
 ```bash
-git clone https://github.com/<你的仓库>.git live2d-pipeline
+git clone https://github.com/Sheeber-2024/live2d-pipeline.git live2d-pipeline
 cd live2d-pipeline
 
 # 1. 取得两个上游工程（本仓库不再分发第三方代码）
@@ -60,7 +60,7 @@ cp .env.example .env && open -e .env
 见 **[docs/WINDOWS.md](docs/WINDOWS.md)**，或直接：
 
 ```bat
-git clone https://github.com/<你的仓库>.git live2d-pipeline
+git clone https://github.com/Sheeber-2024/live2d-pipeline.git live2d-pipeline
 cd live2d-pipeline
 git clone https://github.com/shitagaki-lab/see-through.git see-through
 git clone https://github.com/tsunehimatoi/psd2live.git psd2live

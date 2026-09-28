@@ -37,7 +37,7 @@ java -version
 ### 方式一：从源码构建（推荐，全自动）
 
 ```bat
-git clone https://github.com/<你的仓库>.git live2d-pipeline
+git clone https://github.com/Sheeber-2024/live2d-pipeline.git live2d-pipeline
 cd live2d-pipeline
 
 git clone https://github.com/shitagaki-lab/see-through.git see-through
