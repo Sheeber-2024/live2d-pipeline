@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Live2D 模型预览</title>
+<style>
+  :root{--bg:#0e1116;--card:#171b22;--line:#262c36;--fg:#e6e9ef;--dim:#8b95a5;--accent:#5b8cff;--ok:#3ecf8e;--err:#ff6b6b}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.6 -apple-system,"PingFang SC",system-ui,sans-serif}
+  header{padding:14px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  header h1{font-size:16px;margin:0;font-weight:600}
+  .pill{font-size:12px;padding:3px 9px;border-radius:99px;background:#232a35;color:var(--dim)}
+  .pill.ok{background:#12331f;color:var(--ok)} .pill.err{background:#3a1a1a;color:var(--err)}
+  main{display:flex;gap:0;height:calc(100vh - 57px)}
+  #stage{flex:1;position:relative;background:radial-gradient(circle at 50% 42%,#1c2331,#0e1116 70%)}
+  #stage canvas{display:block}
+  aside{width:270px;border-left:1px solid var(--line);padding:16px;overflow:auto}
+  aside h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);margin:0 0 10px}
+  .row{margin-bottom:12px}
+  .row label{display:flex;justify-content:space-between;font-size:12px;color:var(--dim);margin-bottom:4px}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  button{background:#232a35;color:var(--fg);border:0;border-radius:8px;padding:8px 12px;
+         font:inherit;font-size:13px;cursor:pointer;width:100%;margin-bottom:8px}
+  button:hover{background:#2c3542}
+  button.on{background:var(--accent);color:#fff}
+  #msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+       flex-direction:column;gap:10px;color:var(--dim);text-align:center;padding:24px}
+  #msg.err{color:var(--err)}
+  #meta{font-size:12px;color:var(--dim);margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
+  #meta code{color:#9fb0c7;font-size:11px;word-break:break-all}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Live2D 预览</h1>
+  <span class="pill" id="status">加载中…</span>
+  <span class="pill" id="fps">–</span>
+</header>
+<main>
+  <div id="stage"><div id="msg">正在加载模型…</div></div>
+  <aside>
+    <h2>参数控制</h2>
+    <div id="controls"></div>
+    <h2 style="margin-top:20px">动作</h2>
+    <div id="motions"></div>
+    <h2 style="margin-top:20px">显示</h2>
+    <button id="hit">显示命中区域</button>
+    <div id="meta"></div>
+  </aside>
+</main>
+
+<script src="/vendor/live2dcubismcore.min.js"></script>
+<script src="/vendor/pixi.min.js"></script>
+<script src="/vendor/cubism4.min.js"></script>
+<script>
+const params = new URLSearchParams(location.search);
+const jobId = params.get('job');
+const modelUrl = params.get('model') || ('/api/jobs/' + jobId + '/model/');
+const $ = s => document.querySelector(s);
+const setStatus = (t, cls) => { const e = $('#status'); e.textContent = t; e.className = 'pill' + (cls ? ' ' + cls : ''); };
+
+(async () => {
+  try {
+    if (!window.PIXI || !PIXI.live2d) throw new Error('渲染库未加载（pixi / pixi-live2d-display）');
+
+    // 找到 model3.json 的实际文件名
+    const idx = await (await fetch(modelUrl)).json();
+    const model3 = (idx.files || []).find(f => f.endsWith('.model3.json'));
+    if (!model3) throw new Error('目录中没有 .model3.json');
+    $('#title').textContent = model3.replace('.model3.json', '');
+
+    const app = new PIXI.Application({
+      view: document.createElement('canvas'),
+      resizeTo: $('#stage'),
+      backgroundAlpha: 0,
+      antialias: true,
+    });
+    $('#stage').appendChild(app.view);
+    $('#msg').remove();
+
+    const model = await PIXI.live2d.Live2DModel.from(modelUrl + model3);
+    app.stage.addChild(model);
+    // 模型一加载成功就更新状态；后续 UI 初始化失败不影响模型显示
+    setStatus('已加载', 'ok');
+
+    // 自适应缩放
+    const fit = () => {
+      const s = Math.min(app.screen.width / model.internalModel.width,
+                         app.screen.height / model.internalModel.height) * 0.92;
+      model.scale.set(s);
+      model.x = app.screen.width / 2;
+      model.y = app.screen.height / 2;
+      model.anchor.set(0.5, 0.5);
+    };
+    fit();
+    window.addEventListener('resize', () => setTimeout(fit, 60));
+
+    // 后续步骤各自容错，避免一处失败导致整页显示"失败"
+    const step = (name, fn) => { try { fn(); } catch (e) { console.warn('[' + name + '] 失败:', e); } };
+
+    // 参数滑块：pixi-live2d-display 各版本 coreModel 结构不同，做多路径兼容
+    step('参数面板', () => {
+    const im = model.internalModel || {};
+    const core = im.coreModel || (im._model && im._model.coreModel) || im._coreModel;
+    const ctrl = $('#controls');
+    if (!core) {
+      ctrl.innerHTML = '<div style="color:#8b95a5;font-size:12px">该版本未暴露 coreModel</div>';
+      return;
+    }
+    // 找一个可用的参数接口
+    const readCount = () => {
+      if (typeof core.getParameterCount === 'function') return core.getParameterCount();
+      if (core._parameterIds) return core._parameterIds.length;
+      if (core.parameters && core.parameters.ids) return core.parameters.ids.length;
+      if (core._model && core._model.parameters) return core._model.parameters.count;
+      return 0;
+    };
+    const getId = (i) => (typeof core.getParameterId === 'function' ? core.getParameterId(i)
+                      : core._parameterIds ? core._parameterIds[i]
+                      : core.parameters && core.parameters.ids ? core.parameters.ids[i] : 'param' + i);
+    const getMin = (i) => (typeof core.getParameterMinimumValue === 'function' ? core.getParameterMinimumValue(i)
+                      : core._parameterMinimumValues ? core._parameterMinimumValues[i]
+                      : core.parameters && core.parameters.minimumValues ? core.parameters.minimumValues[i] : -1);
+    const getMax = (i) => (typeof core.getParameterMaximumValue === 'function' ? core.getParameterMaximumValue(i)
+                      : core._parameterMaximumValues ? core._parameterMaximumValues[i]
+                      : core.parameters && core.parameters.maximumValues ? core.parameters.maximumValues[i] : 1);
+    const getVal = (i) => (typeof core.getParameterValueByIndex === 'function' ? core.getParameterValueByIndex(i)
+                      : core._parameterValues ? core._parameterValues[i]
+                      : core.parameters && core.parameters.values ? core.parameters.values[i] : 0);
+    const setVal = (i, id, v) => {
+      if (typeof core.setParameterValueByIndex === 'function') core.setParameterValueByIndex(i, v);
+      else if (typeof core.setParameterValueById === 'function') core.setParameterValueById(id, v);
+    };
+    const count = readCount();
+    if (!count) {
+      ctrl.innerHTML = '<div style="color:#8b95a5;font-size:12px">未取到参数</div>';
+    }
+    for (let i = 0; i < count; i++) {
+      const id  = getId(i);
+      const min = getMin(i);
+      const max = getMax(i);
+      const val = getVal(i);
+      const d = document.createElement('div'); d.className = 'row';
+      d.innerHTML = '<label><span>' + id + '</span><span>' + Number(val).toFixed(2) + '</span></label>'
+                  + '<input type="range" min="' + min + '" max="' + max + '" step="0.01" value="' + val + '">';
+      const rng = d.querySelector('input');
+      rng.oninput = () => {
+        const v = parseFloat(rng.value);
+        setVal(i, id, v);
+        d.querySelector('label span:last-child').textContent = v.toFixed(2);
+      };
+      ctrl.appendChild(d);
+    }
+    });
+
+    // 动作
+    step('动作面板', () => {
+    const defs = (model.internalModel.motionManager || {}).definitions || {};
+    const mo = $('#motions');
+    const names = Object.keys(defs);
+    if (!names.length) mo.innerHTML = '<div style="color:#8b95a5;font-size:12px">无动作文件</div>';
+    names.forEach(g => {
+      const b = document.createElement('button');
+      b.textContent = g + '（' + (defs[g] || []).length + '）';
+      b.onclick = () => model.motion(g, 0);
+      mo.appendChild(b);
+    });
+    });
+
+    // 命中区域
+    let hitOn = false;
+    step('命中区域', () => {
+    $('#hit').onclick = () => {
+      hitOn = !hitOn;
+      model.internalModel.hitAreas && Object.keys(model.internalModel.hitAreas).forEach(k => {
+        model.internalModel.hitAreas[k].isVisible = hitOn;
+      });
+      $('#hit').classList.toggle('on', hitOn);
+    };
+    });
+
+    // 拖动跟随
+    step('拖动交互', () => {
+    app.stage.interactive = true;
+    app.stage.hitArea = app.screen;
+    let dragging = false;
+    app.stage.on('pointerdown', () => dragging = true)
+             .on('pointerup').on('pointerupoutside', () => dragging = false)
+             .on('pointermove', e => {
+               if (!dragging) return;
+               const p = e.global;
+               model.focus(p.x, p.y);
+             });
+    });
+
+    // FPS
+    let last = performance.now(), frames = 0;
+    app.ticker.add(() => {
+      frames++;
+      const now = performance.now();
+      if (now - last >= 1000) { $('#fps').textContent = frames + ' fps'; frames = 0; last = now; }
+    });
+
+    // 元信息
+    await (async () => { try {
+    const m3 = await (await fetch(modelUrl + model3)).json();
+    $('#meta').innerHTML = '文件：<code>' + model3 + '</code><br>'
+      + '引用：' + Object.keys(m3.FileReferences || {}).join(', ') + '<br>'
+      + '画布：' + model.internalModel.width + ' × ' + model.internalModel.height;
+    } catch (e) { console.warn('[元信息] 失败:', e); } })();
+  } catch (e) {
+    $('#msg') && ($('#msg').className = 'err', $('#msg').textContent = '渲染失败：' + (e.message || e));
+    setStatus('失败', 'err');
+    console.error(e);
+  }
+})();
+</script>
+</body>
+</html>

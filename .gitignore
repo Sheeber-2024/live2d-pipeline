@@ -1,0 +1,28 @@
+# ===== 敏感信息（务必不要提交）=====
+.env
+*.env
+!.env.example
+
+# ===== 运行时产物 =====
+stack/jobs/
+stack/out-*/
+output/
+
+# ===== 工具链与依赖（体积大，本地生成）=====
+stack/tools/
+stack/web/vendor/
+psd2live/
+see-through/
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# ===== 编辑器 / 系统 =====
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
